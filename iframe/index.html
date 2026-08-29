@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-Hans">
+	<head>
+		<title>器件连续交换</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<style>
+			:root {
+				color-scheme: light dark;
+				font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				padding: 18px;
+				background: #f6f7f9;
+				color: #1f2329;
+			}
+
+			.header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				margin-bottom: 14px;
+			}
+
+			h1 {
+				margin: 0;
+				font-size: 19px;
+			}
+
+			.status-pill {
+				display: inline-flex;
+				align-items: center;
+				gap: 7px;
+				padding: 5px 10px;
+				border-radius: 999px;
+				background: #e7f7ed;
+				color: #16753a;
+				font-size: 12px;
+				font-weight: 700;
+				white-space: nowrap;
+			}
+
+			.dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #20a354;
+				box-shadow: 0 0 0 4px rgb(32 163 84 / 14%);
+			}
+
+			.intro {
+				margin: 0 0 14px;
+				color: #5f6672;
+				font-size: 13px;
+				line-height: 1.6;
+			}
+
+			.slots {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 12px;
+			}
+
+			.slot {
+				min-width: 0;
+				padding: 14px;
+				border: 1px solid #d9dde5;
+				border-radius: 10px;
+				background: #fff;
+				transition: border-color 120ms, box-shadow 120ms;
+			}
+
+			.slot.active {
+				border-color: #2f6feb;
+				box-shadow: 0 0 0 3px rgb(47 111 235 / 13%);
+			}
+
+			.slot-title {
+				margin-bottom: 7px;
+				color: #2f6feb;
+				font-size: 13px;
+				font-weight: 800;
+			}
+
+			.component-name {
+				display: block;
+				overflow: hidden;
+				margin-bottom: 5px;
+				font-size: 18px;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+
+			.component-meta {
+				overflow: hidden;
+				min-height: 34px;
+				margin-bottom: 11px;
+				color: #7a818d;
+				font-size: 11px;
+				line-height: 1.5;
+				text-overflow: ellipsis;
+			}
+
+			.actions {
+				display: flex;
+				gap: 8px;
+			}
+
+			button {
+				min-height: 32px;
+				padding: 6px 10px;
+				border: 1px solid #c9ced8;
+				border-radius: 7px;
+				background: #fff;
+				color: #29303d;
+				cursor: pointer;
+				font: inherit;
+				font-size: 12px;
+				font-weight: 700;
+			}
+
+			button:hover:not(:disabled) {
+				border-color: #2f6feb;
+				color: #2f6feb;
+			}
+
+			button:disabled {
+				cursor: not-allowed;
+				opacity: 0.42;
+			}
+
+			.pick {
+				flex: 1;
+			}
+
+			.cancel {
+				color: #b42318;
+			}
+
+			.feedback {
+				margin-top: 14px;
+				padding: 11px 13px;
+				border: 1px solid #cbd8f5;
+				border-radius: 8px;
+				background: #eef4ff;
+				color: #244a93;
+				font-size: 13px;
+				font-weight: 700;
+				line-height: 1.55;
+			}
+
+			.feedback.success {
+				border-color: #b8e2c7;
+				background: #eaf8ef;
+				color: #16753a;
+			}
+
+			.feedback.warn {
+				border-color: #f1d399;
+				background: #fff8e8;
+				color: #8a5a00;
+			}
+
+			.feedback.error {
+				border-color: #f0b7b1;
+				background: #fff0ee;
+				color: #b42318;
+			}
+
+			.network-option {
+				display: flex;
+				align-items: flex-start;
+				gap: 10px;
+				margin-top: 14px;
+				padding: 11px 13px;
+				border: 1px solid #f1d399;
+				border-radius: 8px;
+				background: #fff8e8;
+				color: #6f4b00;
+				font-size: 12px;
+				line-height: 1.55;
+			}
+
+			.network-option input {
+				flex: 0 0 auto;
+				margin: 3px 0 0;
+			}
+
+			.network-option strong {
+				display: block;
+				margin-bottom: 2px;
+				color: #6f4b00;
+			}
+
+			.footer {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				margin-top: 12px;
+				color: #7a818d;
+				font-size: 11px;
+				line-height: 1.5;
+			}
+
+			#clear-all {
+				flex: 0 0 auto;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				body {
+					background: #202124;
+					color: #f1f3f4;
+				}
+
+				.intro,
+				.component-meta,
+				.footer {
+					color: #aeb4bd;
+				}
+
+				.status-pill {
+					background: #173b27;
+					color: #78d99b;
+				}
+
+				.slot,
+				button {
+					border-color: #4a4d52;
+					background: #292b2f;
+					color: #f1f3f4;
+				}
+
+				.feedback {
+					border-color: #3b5484;
+					background: #25344f;
+					color: #a9c7ff;
+				}
+
+				.feedback.success {
+					border-color: #2b6841;
+					background: #173b27;
+					color: #78d99b;
+				}
+
+				.feedback.warn {
+					border-color: #795f2d;
+					background: #443719;
+					color: #ffd27a;
+				}
+
+				.feedback.error {
+					border-color: #7e3c37;
+					background: #482724;
+					color: #ffaaa1;
+				}
+
+				.network-option {
+					border-color: #795f2d;
+					background: #443719;
+					color: #ffd27a;
+				}
+
+				.network-option strong {
+					color: #ffd27a;
+				}
+			}
+		</style>
+		<script src="/iframe/index.js" defer></script>
+	</head>
+	<body>
+		<div class="header">
+			<h1>选择两个器件后立即交换</h1>
+			<div class="status-pill"><span class="dot"></span><span id="mode-status">正在启动</span></div>
+		</div>
+
+		<p class="intro">只交换仍处于 PCB 选中状态的器件，并可同步交换位号丝印。选错一个时，可在对应槽位取消后重新选择。</p>
+
+		<div class="slots">
+			<section class="slot active" id="slot-1">
+				<div class="slot-title">器件1</div>
+				<strong class="component-name" id="component-name-1">未选择</strong>
+				<div class="component-meta" id="component-meta-1">请在 PCB 画布点击一个器件</div>
+				<div class="actions">
+					<button class="pick" id="pick-1" type="button">选取器件1</button>
+					<button class="cancel" id="cancel-1" type="button" disabled>取消选中</button>
+				</div>
+			</section>
+
+			<section class="slot" id="slot-2">
+				<div class="slot-title">器件2</div>
+				<strong class="component-name" id="component-name-2">未选择</strong>
+				<div class="component-meta" id="component-meta-2">选择器件1后将自动等待器件2</div>
+				<div class="actions">
+					<button class="pick" id="pick-2" type="button">选取器件2</button>
+					<button class="cancel" id="cancel-2" type="button" disabled>取消选中</button>
+				</div>
+			</section>
+		</div>
+
+		<div class="feedback" id="feedback" role="status" aria-live="polite">正在连接 PCB 画布...</div>
+
+		<label class="network-option" for="sync-designators">
+			<input id="sync-designators" type="checkbox" checked />
+			<span>
+				<strong>同步交换位号丝印</strong>
+				同时交换两个器件 Designator 位号文字的 X、Y 坐标和旋转方向；文字内容、字体、可见性和所在丝印层保持不变。
+			</span>
+		</label>
+
+		<label class="network-option" for="sync-networks">
+			<input id="sync-networks" type="checkbox" checked />
+			<span>
+				<strong>交换对应引脚连接的走线网络</strong>
+				要求两器件焊盘编号完全一致；只修改从这些焊盘中心实际连通的走线、圆弧和过孔。不会修改 PCB 网表、其它器件引脚、覆铜、填充或同名但未连通的铜图元。
+			</span>
+		</label>
+
+		<div class="footer">
+			<span>器件本体、焊盘和器件文字均可点选；交换后器件栏会立即清空。</span>
+			<button id="clear-all" type="button" disabled>全部取消</button>
+		</div>
+
+		<script>
+			window.setTimeout(function () {
+				var modeStatus = document.getElementById('mode-status');
+				var feedback = document.getElementById('feedback');
+				if (modeStatus && modeStatus.textContent === '正在启动') {
+					modeStatus.textContent = '启动失败';
+					feedback.className = 'feedback error';
+					feedback.textContent = '窗口控制脚本未能加载，请确认安装版本为 2.4.0 并完全重启嘉立创 EDA。';
+				}
+			}, 2500);
+		</script>
+	</body>
+</html>
