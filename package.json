@@ -1,16 +1,16 @@
 {
 	"name": "pin-to-pin-component-swap",
 	"type": "module",
-	"version": "2.4.0",
+	"version": "2.4.1",
 	"description": "Continuous PCB component pose and pin-connected route-network swap for JLCEDA Pro",
 	"author": "LIYAN",
 	"license": "Apache-2.0",
-	"homepage": "https://gitee.com/li-yan-123/jlc_extend",
+	"homepage": "https://github.com/ly12121/jlc_extend",
 	"repository": {
 		"type": "git",
-		"url": "https://gitee.com/li-yan-123/jlc_extend.git"
+		"url": "https://github.com/ly12121/jlc_extend.git"
 	},
-	"bugs": "https://gitee.com/li-yan-123/jlc_extend/issues",
+	"bugs": "https://github.com/ly12121/jlc_extend/issues",
 	"bin": {
 		"create-easyeda-api-sdk": "./build/create.js"
 	},

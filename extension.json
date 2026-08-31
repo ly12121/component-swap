@@ -3,15 +3,15 @@
 	"uuid": "5bd19959948a4d66a610f27417282a2f",
 	"displayName": "器件位置与方向交换",
 	"description": "连续选择两个 PCB 器件后立即互换中心坐标、旋转方向和位号丝印，并可只交换对应焊盘实际连接的走线网络。",
-	"version": "2.4.0",
+	"version": "2.4.1",
 	"publisher": "LIYAN",
 	"engines": {
 		"eda": "^3.2.0"
 	},
 	"license": "Apache-2.0",
 	"repository": {
-		"type": "gitee",
-		"url": "https://gitee.com/li-yan-123/jlc_extend.git"
+		"type": "github",
+		"url": "https://github.com/ly12121/jlc_extend.git"
 	},
 	"categories": "PCB",
 	"keywords": [
@@ -28,8 +28,8 @@
 	"images": {
 		"logo": "./images/logo.jpg"
 	},
-	"homepage": "https://gitee.com/li-yan-123/jlc_extend",
-	"bugs": "https://gitee.com/li-yan-123/jlc_extend/issues",
+	"homepage": "https://github.com/ly12121/jlc_extend",
+	"bugs": "https://github.com/ly12121/jlc_extend/issues",
 	"activationEvents": {
 		"onStartupFinished": true
 	},
