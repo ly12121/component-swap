@@ -1,7 +1,7 @@
 {
 	"name": "pin-to-pin-component-swap",
 	"type": "module",
-	"version": "2.4.1",
+	"version": "2.4.2",
 	"description": "Continuous PCB component pose and pin-connected route-network swap for JLCEDA Pro",
 	"author": "LIYAN",
 	"license": "Apache-2.0",

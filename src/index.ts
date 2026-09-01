@@ -1,6 +1,6 @@
 import extensionConfig from '../extension.json' with { type: 'json' };
 
-const DIALOG_TITLE = '器件连续交换';
+const DIALOG_TITLE = '器件交换';
 const PICK_LISTENER_ID = 'component-pose-swap-picker';
 const SWAP_WINDOW_ID = 'componentPoseSwapWindow';
 const SWAP_WINDOW_FILE = '/iframe/index.html';
