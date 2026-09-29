@@ -5,12 +5,12 @@
 	"description": "Continuous PCB component pose and pin-connected route-network swap for JLCEDA Pro",
 	"author": "LIYAN",
 	"license": "Apache-2.0",
-	"homepage": "https://github.com/ly12121/jlc_extend",
+	"homepage": "https://github.com/ly12121/component-swap",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/ly12121/jlc_extend.git"
+		"url": "https://github.com/ly12121/component-swap.git"
 	},
-	"bugs": "https://github.com/ly12121/jlc_extend/issues",
+	"bugs": "https://github.com/ly12121/component-swap/issues",
 	"bin": {
 		"create-easyeda-api-sdk": "./build/create.js"
 	},

@@ -119,9 +119,9 @@ v2.4.0 会在接收画布事件后再次核对 PCB 的实际选中集，并用�
 
 ## 源代码仓库
 
-- 主仓库：[GitHub](https://github.com/ly12121/jlc_extend)
-- 国内镜像：[Gitee](https://gitee.com/li-yan-123/jlc_extend)
-- 问题反馈：[GitHub Issues](https://github.com/ly12121/jlc_extend/issues)
+- 主仓库：[GitHub](https://github.com/ly12121/component-swap)
+- 国内镜像：[Gitee](https://gitee.com/li-yan-123/component-swap)
+- 问题反馈：[GitHub Issues](https://github.com/ly12121/component-swap/issues)
 
 ## 许可证
 
@@ -130,3 +130,9 @@ Apache-2.0
 ## 作者
 
 LIYAN
+
+## 扩展系列
+
+[嘉立创扩展导航](https://github.com/ly12121/jlc-extensions) · [PCB网络刷色](https://github.com/ly12121/pcb-net-color)
+
+最新安装包与源码压缩包见本仓库 [release](./release/) 目录。历史版本保持原样，当前源码仓库地址已更新。

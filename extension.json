@@ -11,7 +11,7 @@
 	"license": "Apache-2.0",
 	"repository": {
 		"type": "github",
-		"url": "https://github.com/ly12121/jlc_extend.git"
+		"url": "https://github.com/ly12121/component-swap.git"
 	},
 	"categories": "PCB",
 	"keywords": [
@@ -28,8 +28,8 @@
 	"images": {
 		"logo": "./images/logo.png"
 	},
-	"homepage": "https://github.com/ly12121/jlc_extend",
-	"bugs": "https://github.com/ly12121/jlc_extend/issues",
+	"homepage": "https://github.com/ly12121/component-swap",
+	"bugs": "https://github.com/ly12121/component-swap/issues",
 	"activationEvents": {
 		"onStartupFinished": true
 	},
