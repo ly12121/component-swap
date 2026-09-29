@@ -3,7 +3,7 @@
 	"uuid": "5bd19959948a4d66a610f27417282a2f",
 	"displayName": "器件交换",
 	"description": "连续选择两个 PCB 器件后立即互换中心坐标、旋转方向和位号丝印，并可只交换对应焊盘实际连接的走线网络。",
-	"version": "2.4.2",
+	"version": "2.4.11",
 	"publisher": "LIYAN",
 	"engines": {
 		"eda": "^3.2.0"

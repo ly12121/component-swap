@@ -28,6 +28,8 @@ const modeStatusElement = document.getElementById('mode-status');
 const clearAllButton = document.getElementById('clear-all');
 const designatorSyncCheckbox = document.getElementById('sync-designators');
 const networkSyncCheckbox = document.getElementById('sync-networks');
+const padPickCheckbox = document.getElementById('pick-via-pads');
+const silkPickCheckbox = document.getElementById('pick-via-silkscreen');
 
 let slots = [undefined, undefined];
 let activeSlotIndex = 0;
@@ -37,12 +39,202 @@ let internalSelectionUpdate = false;
 let suppressEventsUntil = 0;
 let clearSelectionTimer;
 let disposed = false;
+let selectionSyncQueue = Promise.resolve();
+let pickRequest = 0;
+const EXTENSION_VERSION = '2.4.11';
+const ERROR_LOG_KEY = 'component-swap-last-error-v1';
+const diagnosticEvents = [];
+let lastErrorLog = '';
+let logSaveQueue = Promise.resolve();
+
+// Compatibility for hosts which accept openIFrame x/y but omit them when
+// creating their dialog. Only touch the verified ancestor of our own iframe.
+function positionOwnWindow() {
+	const frame = window.frameElement;
+	const container = frame?.closest('[id^="iframeContainer"]');
+	const id = container?.id.slice('iframeContainer'.length);
+	if (!id?.includes('componentPoseSwapWindow')) {
+		throw new Error('未找到本扩展窗口容器，未修改任何窗口。');
+	}
+	const host = frame.ownerDocument;
+	const box = host.getElementById(`${id}_dialog_box`);
+	const root = host.getElementById(id);
+	if (!box?.contains(frame) || !root?.contains(box)) {
+		throw new Error('窗口结构不匹配，未修改任何窗口。');
+	}
+	const viewport = host.defaultView;
+	const before = box.getBoundingClientRect();
+	if (!(before.width > 0 && before.height > 0 && viewport.innerWidth > 0 && viewport.innerHeight > 0)) {
+		throw new Error('窗口尺寸尚未就绪。');
+	}
+	const x = Math.max(0, Math.round(viewport.innerWidth - 328 - before.width));
+	const y = Math.max(0, Math.min(136, viewport.innerHeight - before.height));
+	box.style.position = 'fixed';
+	box.style.left = `${x}px`;
+	box.style.top = `${y}px`;
+	// Match the host's explicit-position path; remove its outer centering offsets.
+	for (const key of ['left', 'top', 'width', 'height']) root.style[key] = '';
+	root.style.opacity = '1';
+	const after = box.getBoundingClientRect();
+	return { x, y, actualX: after.left, actualY: after.top, matched: Math.abs(after.left - x) < 2 && Math.abs(after.top - y) < 2 };
+}
+
+async function positionWindowAfterMount() {
+	let interacted = false;
+	let root;
+	const stop = () => {
+		interacted = true;
+	};
+	const displayLog = (message) => {
+		const text = document.getElementById('error-log');
+		const status = document.getElementById('log-status');
+		if (!lastErrorLog && text && status) {
+			text.value = JSON.stringify({ extension: '器件交换', version: EXTENSION_VERSION, events: diagnosticEvents }, null, 2);
+			status.textContent = message;
+		}
+	};
+	try {
+		root = window.frameElement?.closest('[id$="_dialog_box"]');
+		root?.addEventListener('pointerdown', stop, true);
+		// The inspected host centers at 200 ms. Keep that guard, then verify on
+		// the next short tick instead of adding another 400 ms of hidden time.
+		// Total intentional wait: 250 ms (previously 750 ms).
+		for (const delay of [230, 20]) {
+			await new Promise(resolve => setTimeout(resolve, delay));
+			if (disposed || interacted)
+				return;
+			const result = positionOwnWindow();
+			recordDiagnostic('window-position-applied', result);
+			displayLog(result.matched ? '已生成定位日志，右上角坐标已回读确认。' : '已生成定位日志，坐标未吻合，请复制反馈。');
+		}
+	}
+	catch (error) {
+		recordDiagnostic('window-position-failed', { message: String(error) });
+		displayLog('自动定位失败，已生成日志，可复制反馈；交换功能仍可使用。');
+	}
+	finally {
+		root?.removeEventListener('pointerdown', stop, true);
+		window.__swapReveal?.();
+	}
+}
+
+function recordDiagnostic(event, data = {}) {
+	let snapshot;
+	try {
+		snapshot = JSON.parse(JSON.stringify(data));
+	}
+	catch {
+		snapshot = { note: '此事件包含无法序列化的属性。' };
+	}
+	diagnosticEvents.push({ time: new Date().toISOString(), event, data: snapshot });
+	if (diagnosticEvents.length > 120) {
+		diagnosticEvents.shift();
+	}
+}
+
+function selectionSummary(items) {
+	return (Array.isArray(items) ? items : [items]).filter(Boolean).slice(0, 30).map(item => ({
+		primitiveId: item.primitiveId,
+		primitiveType: item.primitiveType,
+		parentComponentPrimitiveId: item.parentComponentPrimitiveId ?? item.parentPrimitiveId,
+		designator: item.designator ?? item.parentComponentDesignator,
+	}));
+}
+
+function freezeErrorLog(message) {
+	lastErrorLog = JSON.stringify({
+		extension: '器件交换',
+		version: EXTENSION_VERSION,
+		time: new Date().toISOString(),
+		message,
+		candidates: slots,
+		activeSlotIndex,
+		selectionEpoch,
+		swapInProgress,
+		internalSelectionUpdate,
+		options: { pads: padPickCheckbox.checked, silkscreen: silkPickCheckbox.checked, designators: designatorSyncCheckbox.checked, networks: networkSyncCheckbox.checked },
+		events: diagnosticEvents,
+	}, null, 2);
+	const snapshot = lastErrorLog;
+	const text = document.getElementById('error-log');
+	if (text) {
+		text.value = snapshot;
+	}
+	const status = document.getElementById('log-status');
+	if (status) {
+		status.textContent = '已记录最近一次报错，可复制发送。';
+	}
+	// Keep one bounded snapshot across window closes; never upload it automatically.
+	if (typeof eda.sys_Storage?.setExtensionUserConfig === 'function') {
+		logSaveQueue = logSaveQueue.catch(() => {}).then(() => eda.sys_Storage.setExtensionUserConfig(ERROR_LOG_KEY, snapshot)).catch(() => {});
+	}
+}
+
+async function copyErrorLog() {
+	const text = document.getElementById('error-log');
+	const status = document.getElementById('log-status');
+	const panel = document.getElementById('diagnostics');
+	if (!lastErrorLog) {
+		lastErrorLog = JSON.stringify({ extension: '器件交换', version: EXTENSION_VERSION, candidates: slots, events: diagnosticEvents }, null, 2);
+	}
+	text.value = lastErrorLog;
+	panel.open = true;
+	try {
+		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(lastErrorLog);
+			status.textContent = '日志已复制，请粘贴发送。';
+			return;
+		}
+	}
+	catch { /* Clipboard permission may be unavailable inside the EDA iframe. */ }
+	text.focus();
+	text.select();
+	try {
+		if (document.execCommand?.('copy')) {
+			status.textContent = '日志已复制，请粘贴发送。';
+			return;
+		}
+	}
+	catch { /* Leave the full text selected for manual copy. */ }
+	status.textContent = '日志已全选，请按 Ctrl+C 复制。';
+}
+
+async function clearErrorLog() {
+	diagnosticEvents.length = 0;
+	lastErrorLog = '';
+	document.getElementById('error-log').value = '';
+	const status = document.getElementById('log-status');
+	status.textContent = '正在清除日志…';
+	// Serialize with pending saves, so an older snapshot cannot reappear after clearing.
+	const task = logSaveQueue.catch(() => {}).then(async () => {
+		if (typeof eda.sys_Storage?.setExtensionUserConfig === 'function') {
+			const result = await eda.sys_Storage.setExtensionUserConfig(ERROR_LOG_KEY, '');
+			if (result === false)
+				throw new Error('Storage write rejected');
+		}
+	});
+	logSaveQueue = task.catch(() => {});
+	try {
+		await task;
+		if (!lastErrorLog)
+			status.textContent = '日志已清除。后续报错将重新记录。';
+	}
+	catch {
+		if (!lastErrorLog)
+			status.textContent = '当前日志已清除，但清除本地保存记录失败，请重试。';
+	}
+}
 
 function getErrorMessage(error) {
+	recordDiagnostic('exception', { message: String(error?.message ?? error).slice(0, 1200), stack: String(error?.stack ?? '').slice(0, 2000) });
 	return error instanceof Error ? error.message : String(error);
 }
 
 function setFeedback(message, type = 'info') {
+	recordDiagnostic('feedback', { type, message });
+	if (type === 'error') {
+		freezeErrorLog(message);
+	}
 	feedbackElement.textContent = message;
 	feedbackElement.className = type === 'info' ? 'feedback' : `feedback ${type}`;
 }
@@ -68,6 +260,8 @@ function render() {
 	clearAllButton.disabled = swapInProgress || !slots.some(Boolean);
 	designatorSyncCheckbox.disabled = swapInProgress;
 	networkSyncCheckbox.disabled = swapInProgress;
+	padPickCheckbox.disabled = swapInProgress;
+	silkPickCheckbox.disabled = swapInProgress;
 	modeStatusElement.textContent = swapInProgress ? '正在交换' : '连续交换已启动';
 }
 
@@ -86,9 +280,17 @@ function getComponentHits(props) {
 	const hits = new Map();
 
 	for (const prop of props ?? []) {
+		if (prop.primitiveType !== COMPONENT_TYPE) {
+			const isPad = ['Pad', 'ComponentPad'].includes(prop.primitiveType);
+			const isText = ['Attribute', 'String', 'Text', 'ComponentAttribute'].includes(prop.primitiveType)
+				|| ([3, 4].includes(prop.layer) && ['Line', 'Arc', 'Polyline', 'Fill', 'Region'].includes(prop.primitiveType));
+			if (!(isPad && padPickCheckbox.checked) && !(isText && silkPickCheckbox.checked)) {
+				continue;
+			}
+		}
 		const primitiveId = prop.primitiveType === COMPONENT_TYPE
 			? prop.primitiveId
-			: prop.parentComponentPrimitiveId;
+			: prop.parentComponentPrimitiveId ?? prop.parentPrimitiveId;
 		const label = prop.primitiveType === COMPONENT_TYPE
 			? prop.designator
 			: prop.parentComponentDesignator;
@@ -98,7 +300,7 @@ function getComponentHits(props) {
 		}
 
 		if (!hits.has(primitiveId)) {
-			hits.set(primitiveId, { primitiveId, label, sourcePrimitiveIds: [] });
+			hits.set(primitiveId, { primitiveId, label, sourcePrimitiveIds: [], sourceKind: prop.primitiveType });
 		}
 		const hit = hits.get(primitiveId);
 		if (prop.primitiveId && !hit.sourcePrimitiveIds.includes(prop.primitiveId)) {
@@ -107,6 +309,131 @@ function getComponentHits(props) {
 	}
 
 	return [...hits.values()];
+}
+
+function matchesChildId(selectedIds, child, parentId) {
+	const id = child.getState_PrimitiveId?.() ?? child.primitiveId;
+	return id && (selectedIds.has(id) || selectedIds.has(`${parentId}${id}`));
+}
+
+async function resolvePadHits(rows) {
+	const ids = new Set(rows.map(row => row.primitiveId).filter(Boolean));
+	if (!padPickCheckbox.checked || !ids.size)
+		return [];
+	const inspect = async (component) => {
+		if (!component)
+			return [];
+		const parentId = component.getState_PrimitiveId();
+		const pads = typeof component.getAllPins === 'function' ? await component.getAllPins() : component.getState_Pads?.() ?? [];
+		const sources = [...ids].filter(id => pads.some(pad => matchesChildId(new Set([id]), pad, parentId)));
+		return sources.length ? [{ primitiveId: parentId, sourcePrimitiveIds: sources, sourceKind: 'Pad' }] : [];
+	};
+	// Composite IDs are only a lookup hint. Membership must be verified by the
+	// component's actual pad list; never associate an independent pad by proximity.
+	const checked = new Set();
+	for (const id of ids) {
+		const match = id.match(/^([a-f\d]{16}|[a-f\d]{32})e\d+$/i);
+		if (!match)
+			continue;
+		try {
+			const component = await eda.pcb_PrimitiveComponent.get(match[1]);
+			const hits = await inspect(component);
+			checked.add(match[1]);
+			if (hits.length)
+				return hits;
+		}
+		catch { /* Other host versions may use a different ID format. */ }
+	}
+	const components = typeof eda.pcb_PrimitiveComponent.getAll === 'function' ? await eda.pcb_PrimitiveComponent.getAll() : [];
+	for (let start = 0; start < components.length; start += 8) {
+		const batch = components.slice(start, start + 8).filter(component => !checked.has(component.getState_PrimitiveId()));
+		const hits = (await Promise.all(batch.map(inspect))).flat();
+		if (hits.length)
+			return hits;
+	}
+	return [];
+}
+
+async function resolveComponentHits(props) {
+	const rows = Array.isArray(props) ? props : (props ? [props] : []);
+	const direct = getComponentHits(rows);
+	if (direct.length) {
+		return direct;
+	}
+	if (rows.length && rows.every(row => ['Pad', 'ComponentPad'].includes(row.primitiveType))) {
+		return resolvePadHits(rows);
+	}
+	// Mouse events can omit parent IDs; query the actual selected objects instead.
+	const selectedIds = new Set(rows.length ? rows.map(row => row.primitiveId).filter(Boolean) : await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId());
+	const normalized = [];
+	const addObject = (item) => {
+		if (!item) {
+			return;
+		}
+		if (!selectedIds.has(item.getState_PrimitiveId?.() ?? item.primitiveId))
+			return;
+		normalized.push({
+			primitiveId: item.getState_PrimitiveId?.() ?? item.primitiveId,
+			primitiveType: item.getState_PrimitiveType?.() ?? item.primitiveType,
+			parentComponentPrimitiveId: item.getState_ParentComponentPrimitiveId?.()
+				?? item.getState_ParentPrimitiveId?.() ?? item.parentComponentPrimitiveId ?? item.parentPrimitiveId,
+			layer: item.getState_Layer?.() ?? item.layer,
+		});
+	};
+	if (!rows.length && typeof eda.pcb_SelectControl.getAllSelectedPrimitives === 'function') {
+		for (const item of await eda.pcb_SelectControl.getAllSelectedPrimitives()) {
+			addObject(item);
+		}
+	}
+	for (const id of selectedIds) {
+		if (!rows.some(row => row.primitiveId === id && ['Text', 'Attribute', 'String'].includes(row.primitiveType)) && typeof eda.pcb_Primitive?.getPrimitiveByPrimitiveId === 'function') {
+			try {
+				addObject(await eda.pcb_Primitive.getPrimitiveByPrimitiveId(id));
+			}
+			catch { /* Older hosts do not expose all footprint children through the generic API. */ }
+		}
+		if (silkPickCheckbox.checked && typeof eda.pcb_PrimitiveAttribute?.get === 'function') {
+			try {
+				const attr = await eda.pcb_PrimitiveAttribute.get(id);
+				if (attr?.getState_ParentPrimitiveId) {
+					normalized.push({ primitiveId: id, primitiveType: 'Attribute', parentComponentPrimitiveId: attr.getState_ParentPrimitiveId() });
+				}
+			}
+			catch { /* This selected ID may be a pad rather than an attribute. */ }
+		}
+	}
+	let hits = getComponentHits(normalized);
+	if (hits.length) {
+		return hits;
+	}
+	// Last resort: exact child ID lookup, never proximity or designator-text guessing.
+	if (selectedIds.size && typeof eda.pcb_PrimitiveComponent.getAll === 'function') {
+		for (const component of await eda.pcb_PrimitiveComponent.getAll()) {
+			const parentId = component.getState_PrimitiveId();
+			if (selectedIds.has(parentId)) {
+				normalized.push({ primitiveId: parentId, primitiveType: COMPONENT_TYPE });
+			}
+			if (padPickCheckbox.checked) {
+				const pads = typeof component.getAllPins === 'function' ? await component.getAllPins() : component.getState_Pads?.() ?? [];
+				for (const pad of pads) {
+					const id = pad.getState_PrimitiveId?.() ?? pad.primitiveId;
+					if (selectedIds.has(id)) {
+						normalized.push({ primitiveId: id, primitiveType: 'Pad', parentComponentPrimitiveId: parentId });
+					}
+				}
+			}
+			if (silkPickCheckbox.checked && eda.pcb_PrimitiveAttribute) {
+				for (const attr of await getComponentAttributes(parentId)) {
+					const id = attr.getState_PrimitiveId();
+					if (selectedIds.has(id)) {
+						normalized.push({ primitiveId: id, primitiveType: 'Attribute', parentComponentPrimitiveId: parentId });
+					}
+				}
+			}
+		}
+		hits = getComponentHits(normalized);
+	}
+	return hits;
 }
 
 function getComponentLabel(component, fallback) {
@@ -121,11 +448,15 @@ function getPose(component) {
 		x: component.getState_X(),
 		y: component.getState_Y(),
 		rotation: component.getState_Rotation(),
+		layer: component.getState_Layer?.(),
 	};
 }
 
 async function applyPose(component, pose) {
 	const editable = component.toAsync();
+	if (pose.layer !== undefined) {
+		editable.setState_Layer(pose.layer);
+	}
 	editable.setState_X(pose.x);
 	editable.setState_Y(pose.y);
 	editable.setState_Rotation(pose.rotation);
@@ -152,6 +483,8 @@ function getAttributePose(attribute) {
 		x,
 		y,
 		rotation: attribute.getState_Rotation(),
+		layer: attribute.getState_Layer?.(),
+		mirror: attribute.getState_Mirror?.(),
 	};
 }
 
@@ -239,6 +572,12 @@ async function setDesignatorPose(snapshot, pose) {
 	}
 
 	const editable = attribute.toAsync();
+	if (pose.layer !== undefined) {
+		editable.setState_Layer(pose.layer);
+	}
+	if (pose.mirror !== undefined) {
+		editable.setState_Mirror(pose.mirror);
+	}
 	editable.setState_X(pose.x);
 	editable.setState_Y(pose.y);
 	editable.setState_Rotation(pose.rotation);
@@ -698,21 +1037,119 @@ async function restoreConnectedRouteSwap(plan) {
 	return errors;
 }
 
-async function syncCanvasSelection() {
+function syncCanvasSelection() {
+	// Serialize clear/select pairs so two overlapping callbacks cannot clear a newer pair.
+	selectionSyncQueue = selectionSyncQueue.catch(() => {}).then(syncCanvasSelectionNow);
+	return selectionSyncQueue;
+}
+
+async function syncCanvasSelectionNow() {
+	const epoch = selectionEpoch;
+	// Let the mouse click's trailing host selection update complete first.
+	if (slots.some(Boolean))
+		await new Promise(resolve => setTimeout(resolve, 100));
+	if (disposed || epoch !== selectionEpoch)
+		return;
 	const primitiveIds = slots.filter(Boolean).map(component => component.primitiveId);
+	const candidates = slots.filter(Boolean);
+	if (primitiveIds.length) {
+		const current = await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId();
+		const allowed = new Set(candidates.flatMap(item => [item.primitiveId, ...(item.sourcePrimitiveIds ?? [])]));
+		if (!current.length || current.some(id => !allowed.has(id))) {
+			const normalized = await getSelectedComponentIds(candidates);
+			if (!candidates.some(item => normalized.has(item.primitiveId)))
+				return;
+		}
+	}
+	recordDiagnostic('selection-sync-start', { requested: primitiveIds, epoch: selectionEpoch });
 	internalSelectionUpdate = true;
 	suppressEventsUntil = Date.now() + EVENT_SUPPRESSION_MS;
 
 	try {
 		await eda.pcb_SelectControl.clearSelected();
 		if (primitiveIds.length > 0) {
-			await eda.pcb_SelectControl.doSelectPrimitives(primitiveIds);
+			for (let attempt = 0; attempt < 3; attempt += 1) {
+				internalSelectionUpdate = true;
+				const accepted = await eda.pcb_SelectControl.doSelectPrimitives(primitiveIds);
+				internalSelectionUpdate = false;
+				suppressEventsUntil = Date.now() + EVENT_SUPPRESSION_MS;
+				recordDiagnostic('selection-write-result', { attempt, accepted, requested: primitiveIds });
+				if (accepted === false)
+					throw new Error('PCB 未接受器件选中请求，请重新选择。');
+				await new Promise(resolve => setTimeout(resolve, 100));
+				if (disposed || epoch !== selectionEpoch)
+					return;
+				if (JSON.stringify(slots.filter(Boolean).map(item => item.primitiveId)) !== JSON.stringify(primitiveIds))
+					return;
+				const actual = await getSelectedComponentIds(candidates);
+				if (primitiveIds.every(id => actual.has(id)))
+					break;
+				// Only repair a nonempty subset of this same pair. Empty or unrelated
+				// selection means the user cleared/changed selection; never resurrect it.
+				const raw = await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId();
+				const allowed = new Set(slots.filter(Boolean).flatMap(item => [item.primitiveId, ...(item.sourcePrimitiveIds ?? [])]));
+				if (!raw.length || raw.some(id => !allowed.has(id)))
+					break;
+			}
 		}
 	}
 	finally {
+		recordDiagnostic('selection-sync-end', { requested: primitiveIds, epoch: selectionEpoch });
 		internalSelectionUpdate = false;
 		suppressEventsUntil = Date.now() + EVENT_SUPPRESSION_MS;
 	}
+}
+
+async function getSelectedComponentIds(candidates) {
+	const selectedIds = new Set(await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId());
+	recordDiagnostic('selection-read', { selectedCount: selectedIds.size, selected: [...selectedIds].slice(0, 60), candidates });
+	const result = new Set(selectedIds);
+	for (const candidate of candidates.filter(Boolean)) {
+		if (result.has(candidate.primitiveId)) {
+			continue;
+		}
+		// The source IDs were supplied by EDA with this component's parent ID.
+		if ((candidate.sourcePrimitiveIds ?? []).some(id => selectedIds.has(id))) {
+			result.add(candidate.primitiveId);
+			continue;
+		}
+		// Some hosts expand a selected component into pad/attribute IDs on readback.
+		const component = await eda.pcb_PrimitiveComponent.get(candidate.primitiveId);
+		if (!component) {
+			continue;
+		}
+		const pads = typeof component.getAllPins === 'function'
+			? await component.getAllPins()
+			: component.getState_Pads?.() ?? [];
+		const childId = item => item.getState_PrimitiveId?.() ?? item.primitiveId;
+		if (pads.some(pad => matchesChildId(selectedIds, pad, candidate.primitiveId))) {
+			result.add(candidate.primitiveId);
+			continue;
+		}
+		if (eda.pcb_PrimitiveAttribute) {
+			const attributes = await getComponentAttributes(candidate.primitiveId);
+			if (attributes.some(attribute => selectedIds.has(childId(attribute)))) {
+				result.add(candidate.primitiveId);
+			}
+		}
+	}
+	recordDiagnostic('selection-normalized', { selected: [...result].slice(0, 60) });
+	return result;
+}
+
+async function waitForSelectedComponents(candidates) {
+	let selectedIds;
+	for (const delay of [0, 40, 80, 140]) {
+		if (delay) {
+			await new Promise(resolve => setTimeout(resolve, delay));
+		}
+		selectedIds = await getSelectedComponentIds(candidates);
+		recordDiagnostic('selection-verify', { delay, matched: candidates.map(item => ({ id: item.primitiveId, selected: selectedIds.has(item.primitiveId) })) });
+		if (candidates.every(candidate => selectedIds.has(candidate.primitiveId))) {
+			break;
+		}
+	}
+	return selectedIds;
 }
 
 function chooseNextActiveSlot() {
@@ -768,9 +1205,11 @@ async function reconcileSelectedState() {
 	}
 
 	try {
-		const selectedIds = new Set(
-			await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId(),
-		);
+		const epoch = selectionEpoch;
+		const selectedIds = await getSelectedComponentIds(slots);
+		if (epoch !== selectionEpoch || internalSelectionUpdate || swapInProgress) {
+			return;
+		}
 		let changed = false;
 
 		for (let index = 0; index < slots.length; index += 1) {
@@ -811,9 +1250,7 @@ async function swapSelectedComponents() {
 	);
 
 	try {
-		const selectedIds = new Set(
-			await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId(),
-		);
+		const selectedIds = await waitForSelectedComponents([componentHitA, componentHitB]);
 		if (!selectedIds.has(componentHitA.primitiveId) || !selectedIds.has(componentHitB.primitiveId)) {
 			throw new Error('器件1或器件2已不在 PCB 选中状态，本次没有执行交换。');
 		}
@@ -843,7 +1280,7 @@ async function swapSelectedComponents() {
 				? prepareConnectedRouteSwap(componentA, componentB, labelA, labelB)
 				: undefined,
 		]);
-		const pendingDetails = ['位置', '方向'];
+		const pendingDetails = ['位置', '方向', '所在板层'];
 		if (designatorPlan) {
 			pendingDetails.push('位号丝印');
 		}
@@ -969,9 +1406,7 @@ async function assignComponent(hit) {
 		setFeedback('点击位置没有读取到器件，请点击器件本体、焊盘或器件文字。', 'warn');
 		return;
 	}
-	const selectedIds = new Set(
-		await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId(),
-	);
+	const selectedIds = await getSelectedComponentIds([hit]);
 	if (disposed || swapInProgress || assignmentEpoch !== selectionEpoch) {
 		return;
 	}
@@ -982,7 +1417,7 @@ async function assignComponent(hit) {
 	}
 
 	const label = getComponentLabel(component, hit.label);
-	slots[targetIndex] = { primitiveId: hit.primitiveId, label };
+	slots[targetIndex] = { ...hit, label };
 	chooseNextActiveSlot();
 	render();
 	await syncCanvasSelection();
@@ -999,7 +1434,10 @@ async function assignComponent(hit) {
 	}
 }
 
-function handleMouseEvent(eventType, props) {
+async function handleMouseEvent(eventType, props) {
+	if (eventType === SELECTED_EVENT || eventType === CLEAR_SELECTED_EVENT) {
+		recordDiagnostic('canvas-event', { eventType, props: selectionSummary(props), epoch: selectionEpoch, swapInProgress, internalSelectionUpdate });
+	}
 	if (disposed || swapInProgress) {
 		return;
 	}
@@ -1010,7 +1448,20 @@ function handleMouseEvent(eventType, props) {
 			clearSelectionTimer = undefined;
 		}
 
-		const hits = getComponentHits(props);
+		const request = ++pickRequest;
+		const epoch = selectionEpoch;
+		let hits;
+		try {
+			hits = await resolveComponentHits(props);
+			recordDiagnostic('resolved-hits', { hits });
+		}
+		catch (error) {
+			setFeedback(`读取所选图元归属失败：${getErrorMessage(error)}`, 'error');
+			return;
+		}
+		if (disposed || swapInProgress || request !== pickRequest || epoch !== selectionEpoch) {
+			return;
+		}
 		if (hits.length === 0) {
 			if (!internalSelectionUpdate && Date.now() >= suppressEventsUntil) {
 				setFeedback('请点击器件本体、焊盘或器件文字。', 'warn');
@@ -1054,6 +1505,36 @@ function handleMouseEvent(eventType, props) {
 }
 
 function bindControls() {
+	document.getElementById('clear-log')?.addEventListener('click', () => {
+		void clearErrorLog();
+	});
+	document.getElementById('copy-log')?.addEventListener('click', () => {
+		void copyErrorLog().catch(() => {
+			const status = document.getElementById('log-status');
+			if (status) {
+				status.textContent = '请展开日志并手动全选复制。';
+			}
+		});
+	});
+	try {
+		const saved = eda.sys_Storage?.getExtensionUserConfig?.(ERROR_LOG_KEY);
+		if (typeof saved === 'string' && saved.length < 300000) {
+			lastErrorLog = saved;
+			const text = document.getElementById('error-log');
+			if (text) {
+				text.value = saved;
+			}
+		}
+	}
+	catch { /* Logging must never prevent the swap window from starting. */ }
+	recordDiagnostic('window-start', { version: EXTENSION_VERSION });
+	for (const checkbox of [padPickCheckbox, silkPickCheckbox]) {
+		checkbox.addEventListener('change', () => {
+			void cancelAll(false).then(() => {
+				setFeedback('点选方式已更新，候选栏已清空，请重新选择两个器件。');
+			}).catch(error => setFeedback(getErrorMessage(error), 'error'));
+		});
+	}
 	for (let index = 0; index < slotElements.length; index += 1) {
 		slotElements[index].pick.addEventListener('click', () => {
 			if (swapInProgress) {
@@ -1114,6 +1595,14 @@ function bindControls() {
 async function start() {
 	try {
 		bindControls();
+		void positionWindowAfterMount();
+		try {
+			const position = await eda.sys_Storage?.getExtensionUserConfig?.('component-swap-window-position-v1');
+			recordDiagnostic('window-position-request', { position });
+		}
+		catch (error) {
+			recordDiagnostic('window-position-read-failed', { message: String(error) });
+		}
 		try {
 			eda.pcb_Event.removeEventListener(PICK_LISTENER_ID);
 		}

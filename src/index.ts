@@ -4,6 +4,48 @@ const DIALOG_TITLE = '器件交换';
 const PICK_LISTENER_ID = 'component-pose-swap-picker';
 const SWAP_WINDOW_ID = 'componentPoseSwapWindow';
 const SWAP_WINDOW_FILE = '/iframe/index.html';
+const SWAP_WINDOW_WIDTH = 460;
+const SWAP_WINDOW_HEIGHT = 540;
+// Screenshot-calibrated CSS-pixel offsets. The public API exposes viewport size,
+// but not the resizable right panel's bounds. Do not multiply by devicePixelRatio.
+const DEFAULT_RIGHT_PANEL_WIDTH = 328;
+const DEFAULT_CANVAS_TOP = 136;
+
+async function getDefaultWindowPosition(): Promise<{ x?: number; y?: number }> {
+	let size: { width: number; height: number } | undefined;
+	let source = 'api';
+	let failure = '';
+	try {
+		// Desktop extension bridges may return a Promise despite the sync declaration.
+		size = await eda.sys_Window?.getViewportSize?.();
+	}
+	catch (error) {
+		failure = String(error);
+	}
+	const valid = (value: typeof size): boolean => !!value && Number.isFinite(value.width) && Number.isFinite(value.height) && value.width > 0 && value.height > 0;
+	if (!valid(size) && typeof window !== 'undefined') {
+		size = { width: window.innerWidth, height: window.innerHeight };
+		source = 'window';
+	}
+	if (!valid(size) && typeof screen !== 'undefined') {
+		size = { width: screen.availWidth, height: screen.availHeight };
+		source = 'screen';
+	}
+	const position = valid(size) && size
+		? {
+				x: Math.max(0, Math.round(size.width - DEFAULT_RIGHT_PANEL_WIDTH - SWAP_WINDOW_WIDTH)),
+				y: Math.max(0, Math.min(DEFAULT_CANVAS_TOP, Math.round(size.height - SWAP_WINDOW_HEIGHT - 32))),
+			}
+		: { y: DEFAULT_CANVAS_TOP };
+	try {
+		await eda.sys_Storage?.setExtensionUserConfig?.('component-swap-window-position-v1', JSON.stringify({ version: extensionConfig.version, source, size, position, failure, valid: valid(size) }));
+	}
+	catch { /* Position diagnostics must not prevent opening. */ }
+	if (!valid(size)) {
+		showToast('无法读取窗口宽度，未能计算右上角位置；请复制日志反馈。', 'warn');
+	}
+	return position;
+}
 
 type ToastType = 'error' | 'warn' | 'info' | 'success' | 'question';
 
@@ -100,10 +142,11 @@ export async function openSwapWindow(): Promise<void> {
 
 		const openRequest = eda.sys_IFrame.openIFrame(
 			SWAP_WINDOW_FILE,
-			540,
-			620,
+			SWAP_WINDOW_WIDTH,
+			SWAP_WINDOW_HEIGHT,
 			SWAP_WINDOW_ID,
 			{
+				...await getDefaultWindowPosition(),
 				title: DIALOG_TITLE,
 				grayscaleMask: false,
 				minimizeButton: true,
@@ -161,7 +204,7 @@ export function about(): void {
 			'',
 			'默认开启“同步交换位号丝印”：',
 			'- 同时交换两个器件 Designator 位号文字的 X、Y 坐标和旋转方向。',
-			'- 位号文字内容、字体、可见性和所在丝印层保持不变。',
+			'- 同时交换位号丝印层和镜像状态；文字内容、字体、可见性保持不变。',
 			'- 不需要同步位号时，可在选择第二个器件前取消勾选。',
 			'',
 			'默认开启“交换对应引脚连接的走线网络”：',
@@ -169,7 +212,7 @@ export function about(): void {
 			'- 扩展从每个器件焊盘中心出发，只查找实际连通的直线、圆弧和过孔。',
 			'- 只交换这些连通走线图元的网络；不按网络名扫描全板。',
 			'- PCB 网表、两个器件及其它器件的引脚、覆铜、填充、独立焊盘和未连通铜图元均不修改。',
-			'- 板面、物料信息及原理图不变。',
+			'- 器件板面随位置互换，物料信息及原理图不变。',
 			'',
 			'关闭网络同步后，仍互换器件及已开启的位号丝印 X、Y 坐标和旋转角度；此时允许不同封装和不同焊盘数量。',
 			'锁定器件不会被修改；请先解锁。',
